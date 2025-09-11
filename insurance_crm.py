@@ -812,6 +812,50 @@ def upcoming_premiums_page():
         st.info("No upcoming premiums found")
 
     conn.close()
+# Database Viewer page
+def database_viewer_page():
+    st.title("📑 Database Viewer")
+    st.markdown("Browse raw data stored in the SQLite database")
+
+    conn = sqlite3.connect("crm.db")
+    tables = ["agents", "customers", "policies", "premiums"]
+
+    selected_table = st.selectbox("Select Table", tables)
+
+    try:
+        df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
+
+        # 🔹 Fix formatting for specific columns
+        if "phone" in df.columns:
+            df["phone"] = df["phone"].astype(str)
+        if "aadhar" in df.columns:
+            df["aadhar"] = df["aadhar"].astype(str)
+        if "created_at" in df.columns:
+            df["created_at"] = pd.to_datetime(
+                df["created_at"], errors="coerce", infer_datetime_format=True
+            ).dt.date
+
+        if df.empty:
+            st.info(f"No records found in table `{selected_table}`.")
+        else:
+            st.dataframe(df, use_container_width=True)
+
+            # Show row count
+            st.write(f"**Total Rows:** {len(df)}")
+
+            # ✅ Download as CSV with utf-8-sig (Excel friendly)
+            csv = df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label=f"⬇️ Download {selected_table} as CSV",
+                data=csv,
+                file_name=f"{selected_table}.csv",
+                mime="text/csv",
+            )
+
+    except Exception as e:
+        st.error(f"Error loading table: {e}")
+
+    conn.close()
 
 # Main app logic
 def main():
