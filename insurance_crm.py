@@ -324,9 +324,9 @@ def customer_enrollment_page():
                 customer_id = f"C{str(uuid.uuid4())[:8]}"
                 c.execute(
                     "INSERT INTO customers (id, agent_id, pan, aadhar, name, phone, email, income_range, parent_id, relationship, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (customer_id, st.session_state.current_agent['id'], pan_card, aadhar_number,
-                     customer_name, phone_number, email_address, income_range, 
-                     parent_customer_id, relationship, datetime.now()))
+                    (customer_id, st.session_state.current_agent['id'], str(pan_card), str(aadhar_number),
+                     customer_name, str(phone_number), email_address, income_range, 
+                     parent_customer_id, relationship, datetime.now().date())
                 conn.commit()
                 conn.close()
 
