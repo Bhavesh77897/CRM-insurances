@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime, timedelta
 
 # Set up the page
-# hello world
 st.set_page_config(
     page_title="Insurance CRM System",
     page_icon="📊",
