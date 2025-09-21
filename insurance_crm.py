@@ -13,12 +13,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
 # Database setup
 def init_db():
     # Create data directory if it doesn't exist
     if not os.path.exists('data'):
         os.makedirs('data')
-    
+
     # Connect to database in data directory
     conn = sqlite3.connect('data/crm.db')
     c = conn.cursor()
@@ -47,29 +48,9 @@ def init_db():
                 amount REAL, status TEXT, paid_date TIMESTAMP,
                 FOREIGN KEY(policy_id) REFERENCES policies(id))''')
 
-    # Check if new columns exist, if not add them
-    c.execute("PRAGMA table_info(customers)")
-    columns = [col[1] for col in c.fetchall()]
-
-    if 'parent_id' not in columns:
-        c.execute("ALTER TABLE customers ADD COLUMN parent_id TEXT")
-    if 'relationship' not in columns:
-        c.execute("ALTER TABLE customers ADD COLUMN relationship TEXT")
-
-    c.execute("PRAGMA table_info(policies)")
-    policy_columns = [col[1] for col in c.fetchall()]
-
-    if 'policy_holder_id' not in policy_columns:
-        c.execute("ALTER TABLE policies ADD COLUMN policy_holder_id TEXT")
-    if 'beneficiary_name' not in policy_columns:
-        c.execute("ALTER TABLE policies ADD COLUMN beneficiary_name TEXT")
-    if 'beneficiary_pan' not in policy_columns:
-        c.execute("ALTER TABLE policies ADD COLUMN beneficiary_pan TEXT")
-    if 'beneficiary_aadhar' not in policy_columns:
-        c.execute("ALTER TABLE policies ADD COLUMN beneficiary_aadhar TEXT")
-
     conn.commit()
     conn.close()
+
 
 # Initialize database
 init_db()
@@ -79,6 +60,7 @@ if 'current_agent' not in st.session_state:
     st.session_state.current_agent = None
 if 'page' not in st.session_state:
     st.session_state.page = 'Dashboard'
+
 
 # Agent authentication
 def agent_login(agent_id):
@@ -97,6 +79,7 @@ def agent_login(agent_id):
         return True
     return False
 
+
 # Create a demo agent if none exists
 def create_demo_agent():
     conn = sqlite3.connect('data/crm.db')
@@ -110,23 +93,26 @@ def create_demo_agent():
         conn.commit()
     conn.close()
 
+
 create_demo_agent()
+
 
 # Navigation function
 def navigate_to(page):
     st.session_state.page = page
     st.rerun()
 
+
 # Sidebar navigation
 def render_sidebar():
     with st.sidebar:
         st.title("InsureCRM Navigation")
-        
+
         if st.session_state.current_agent:
             st.write(f"**Logged in as:** {st.session_state.current_agent['name']}")
             st.write(f"**Agent ID:** {st.session_state.current_agent['id']}")
             st.divider()
-        
+
         # Navigation options
         nav_options = {
             "Dashboard": "📊",
@@ -136,49 +122,159 @@ def render_sidebar():
             "Family Management": "👨‍👩‍👧‍👦",
             "Upcoming Premiums": "💰"
         }
-        
+
         for page, icon in nav_options.items():
-            if st.button(f"{icon} {page}", use_container_width=True, 
-                        type="primary" if st.session_state.page == page else "secondary"):
+            if st.button(f"{icon} {page}", use_container_width=True,
+                         type="primary" if st.session_state.page == page else "secondary"):
                 navigate_to(page)
-        
+
         # Data management section
         st.divider()
         st.subheader("Data Management")
-        
-        if st.button("💾 Export Data to CSV", use_container_width=True):
-            export_data_to_csv()
-        
+
+        if st.button("💾 Export Data (CSV + TXT)", use_container_width=True):
+            export_data_to_csv_and_txt()
+
         st.divider()
-        
+
         if st.session_state.current_agent:
             if st.button("🚪 Logout", use_container_width=True):
                 st.session_state.current_agent = None
                 st.session_state.page = 'Login'
                 st.rerun()
 
-# Data export function
-def export_data_to_csv():
+
+# Data export function - FIXED VERSION
+from datetime import datetime
+
+
+def export_data_to_csv_and_txt():
     try:
+        export_path = r"D:\test"
+        if not os.path.exists(export_path):
+            os.makedirs(export_path)
+
         conn = sqlite3.connect('data/crm.db')
-        
-        # Export customers
-        customers_df = pd.read_sql_query("SELECT * FROM customers", conn)
-        customers_df.to_csv("data/customers_export.csv", index=False)
-        
-        # Export policies
-        policies_df = pd.read_sql_query("SELECT * FROM policies", conn)
-        policies_df.to_csv("data/policies_export.csv", index=False)
-        
-        # Export premiums
-        premiums_df = pd.read_sql_query("SELECT * FROM premiums", conn)
-        premiums_df.to_csv("data/premiums_export.csv", index=False)
-        
+
+        # Add timestamp to avoid locked overwrite issues
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # --- Customers ---
+        customers_df = pd.read_sql_query(
+            "SELECT * FROM customers WHERE agent_id=?",
+            conn, params=(st.session_state.current_agent['id'],)
+        )
+        customers_file = os.path.join(export_path, f"customers_export_{timestamp}.csv")
+        customers_df.to_csv(customers_file, index=False, encoding="utf-8-sig")
+
+        # --- Policies with all statuses ---
+        policies_df = pd.read_sql_query('''
+            SELECT p.*, c.name as customer_name 
+            FROM policies p 
+            JOIN customers c ON p.customer_id = c.id 
+            WHERE c.agent_id=?
+        ''', conn, params=(st.session_state.current_agent['id'],))
+        policies_file = os.path.join(export_path, f"policies_export_{timestamp}.csv")
+        policies_df.to_csv(policies_file, index=False, encoding="utf-8-sig")
+
+        # --- Premiums ---
+        premiums_df = pd.read_sql_query('''
+            SELECT pr.*, p.policy_number, c.name as customer_name, p.status as policy_status
+            FROM premiums pr 
+            JOIN policies p ON pr.policy_id = p.id 
+            JOIN customers c ON p.customer_id = c.id 
+            WHERE c.agent_id=?
+        ''', conn, params=(st.session_state.current_agent['id'],))
+        premiums_file = os.path.join(export_path, f"premiums_export_{timestamp}.csv")
+        premiums_df.to_csv(premiums_file, index=False, encoding="utf-8-sig")
+
+        # --- TXT Export ---
+        txt_file = os.path.join(export_path, f"data_export_{timestamp}.txt")
+        with open(txt_file, "w", encoding="utf-8") as f:
+            f.write("=== Customers ===\n\n")
+            f.write(customers_df.to_string(index=False))
+            f.write("\n\n=== Policies ===\n\n")
+            f.write(policies_df.to_string(index=False))
+            f.write("\n\n=== Premiums ===\n\n")
+            f.write(premiums_df.to_string(index=False))
+            f.write("\n")
+
         conn.close()
-        
-        st.sidebar.success("Data exported successfully to data/ folder!")
+
+        st.sidebar.success(f"✅ Data exported successfully to {export_path}")
+        st.sidebar.info("📁 Files created with timestamp suffix (CSV + TXT)")
+
     except Exception as e:
-        st.sidebar.error(f"Error exporting data: {str(e)}")
+        st.sidebar.error(f"❌ Error exporting data: {str(e)}")
+
+
+# Add this function to update policy status automatically
+
+
+def update_policy_status(policy_id, conn):
+    c = conn.cursor()
+
+    # First check if policy is already cancelled
+    c.execute("SELECT status FROM policies WHERE id=?", (policy_id,))
+    current_status = c.fetchone()[0]
+
+    # If policy is already cancelled, don't change the status
+    if current_status == 'Cancelled':
+        return
+
+    # Check if all premiums are paid
+    c.execute("SELECT COUNT(*) FROM premiums WHERE policy_id=? AND status='Pending'", (policy_id,))
+    pending_count = c.fetchone()[0]
+
+    if pending_count == 0:
+        # All premiums paid - mark as Completed
+        c.execute("UPDATE policies SET status='Completed' WHERE id=?", (policy_id,))
+    else:
+        # Check if any premium is overdue
+        c.execute("SELECT COUNT(*) FROM premiums WHERE policy_id=? AND status='Pending' AND due_date < date('now')",
+                  (policy_id,))
+        overdue_count = c.fetchone()[0]
+
+        if overdue_count > 0:
+            # Has overdue premiums - mark as Lapsed
+            c.execute("UPDATE policies SET status='Lapsed' WHERE id=?", (policy_id,))
+        else:
+            # Has pending premiums but none overdue - mark as Active
+            c.execute("UPDATE policies SET status='Active' WHERE id=?", (policy_id,))
+
+    conn.commit()
+
+# Modify the mark_premium_as_paid function to call update_policy_status
+def mark_premium_as_paid(policy_id, conn):
+    premium = pd.read_sql_query(
+        "SELECT * FROM premiums WHERE policy_id=? AND status='Pending' ORDER BY due_date LIMIT 1",
+        conn, params=(policy_id,)
+    )
+    if not premium.empty:
+        c = conn.cursor()
+        c.execute("UPDATE premiums SET status='Paid', paid_date=? WHERE id=?",
+                  (datetime.now().date(), premium.iloc[0]['id']))
+        conn.commit()
+
+        # Update policy status after marking premium as paid
+        update_policy_status(policy_id, conn)
+        st.success("Premium marked as paid!")
+
+
+# Add a function to cancel a policy
+def cancel_policy(policy_id, conn):
+    c = conn.cursor()
+
+    # First, delete all pending premiums for this policy
+    c.execute("DELETE FROM premiums WHERE policy_id=? AND status='Pending'", (policy_id,))
+
+    # Then mark the policy as cancelled (direct update without calling update_policy_status)
+    c.execute("UPDATE policies SET status='Cancelled' WHERE id=?", (policy_id,))
+
+    conn.commit()
+    st.success("Policy cancelled successfully! All pending premiums have been removed.")
+    st.rerun()
+
 
 # Login page
 def login_page():
@@ -198,42 +294,59 @@ def login_page():
                 else:
                     st.error("Invalid Agent ID")
 
+
 # Dashboard page
 def dashboard_page():
     st.title("📊 Insurance CRM Dashboard")
-    
+
     # Dashboard metrics
     conn = sqlite3.connect('data/crm.db')
-    
+
     # Get counts
     customers_count = pd.read_sql_query(
-        "SELECT COUNT(*) as count FROM customers WHERE agent_id=?", 
+        "SELECT COUNT(*) as count FROM customers WHERE agent_id=?",
         conn, params=(st.session_state.current_agent['id'],)
     ).iloc[0]['count']
-    
+
     policies_count = pd.read_sql_query(
         "SELECT COUNT(*) as count FROM policies p JOIN customers c ON p.customer_id = c.id WHERE c.agent_id=?",
         conn, params=(st.session_state.current_agent['id'],)
     ).iloc[0]['count']
-    
+
     active_policies_count = pd.read_sql_query(
         "SELECT COUNT(*) as count FROM policies p JOIN customers c ON p.customer_id = c.id WHERE c.agent_id=? AND p.status='Active'",
         conn, params=(st.session_state.current_agent['id'],)
     ).iloc[0]['count']
-    
+
+    # Add counts for other statuses
+    lapsed_policies_count = pd.read_sql_query(
+        "SELECT COUNT(*) as count FROM policies p JOIN customers c ON p.customer_id = c.id WHERE c.agent_id=? AND p.status='Lapsed'",
+        conn, params=(st.session_state.current_agent['id'],)
+    ).iloc[0]['count']
+
+    completed_policies_count = pd.read_sql_query(
+        "SELECT COUNT(*) as count FROM policies p JOIN customers c ON p.customer_id = c.id WHERE c.agent_id=? AND p.status='Completed'",
+        conn, params=(st.session_state.current_agent['id'],)
+    ).iloc[0]['count']
+
+    cancelled_policies_count = pd.read_sql_query(
+        "SELECT COUNT(*) as count FROM policies p JOIN customers c ON p.customer_id = c.id WHERE c.agent_id=? AND p.status='Cancelled'",
+        conn, params=(st.session_state.current_agent['id'],)
+    ).iloc[0]['count']
+
     family_members_count = pd.read_sql_query(
         "SELECT COUNT(*) as count FROM customers WHERE agent_id=? AND parent_id IS NOT NULL",
         conn, params=(st.session_state.current_agent['id'],)
     ).iloc[0]['count']
-    
+
     # Get upcoming premiums (next 30 days)
     upcoming_premiums = pd.read_sql_query(
         "SELECT pr.due_date, pr.amount, c.name as customer_name, p.policy_number FROM premiums pr JOIN policies p ON pr.policy_id = p.id JOIN customers c ON p.customer_id = c.id WHERE c.agent_id=? AND pr.status='Pending' AND pr.due_date BETWEEN date('now') AND date('now', '+30 days') ORDER BY pr.due_date",
         conn, params=(st.session_state.current_agent['id'],)
     )
-    
+
     conn.close()
-    
+
     # Quick actions
     st.subheader("Quick Actions")
     action_col1, action_col2, action_col3 = st.columns(3)
@@ -246,7 +359,7 @@ def dashboard_page():
     with action_col3:
         if st.button("🔍 Search Records", use_container_width=True):
             navigate_to("Records")
-    
+
     # Display metrics
     st.subheader("Business Overview")
     col1, col2, col3, col4 = st.columns(4)
@@ -258,21 +371,35 @@ def dashboard_page():
         st.metric("✅ Active Policies", active_policies_count)
     with col4:
         st.metric("👨‍👩‍👧‍👦 Family Members", family_members_count)
-    
+
+    # Additional policy status metrics
+    st.subheader("Policy Status Overview")
+    status_col1, status_col2, status_col3, status_col4 = st.columns(4)
+    with status_col1:
+        st.metric("⏰ Lapsed Policies", lapsed_policies_count)
+    with status_col2:
+        st.metric("🏁 Completed Policies", completed_policies_count)
+    with status_col3:
+        st.metric("❌ Cancelled Policies", cancelled_policies_count)
+    with status_col4:
+        total_pending = upcoming_premiums['amount'].sum() if not upcoming_premiums.empty else 0
+        st.metric("💰 Pending Premiums", f"₹{total_pending:,.2f}")
+
     # Upcoming premiums
     st.subheader("📅 Upcoming Premiums (Next 30 Days)")
     if not upcoming_premiums.empty:
         upcoming_premiums['due_date'] = pd.to_datetime(upcoming_premiums['due_date']).dt.date
         st.dataframe(upcoming_premiums, use_container_width=True)
-        
+
         # Calculate total upcoming premiums
         total_upcoming = upcoming_premiums['amount'].sum()
         st.write(f"**Total Amount Due:** ₹{total_upcoming:,.2f}")
-        
+
         if st.button("View All Premiums", use_container_width=True):
             navigate_to("Upcoming Premiums")
     else:
         st.info("No upcoming premiums in the next 30 days")
+
 
 # Customer enrollment page
 def customer_enrollment_page():
@@ -294,29 +421,29 @@ def customer_enrollment_page():
         col1, col2 = st.columns(2)
         with col1:
             customer_name = st.text_input(
-                "Full Name*", 
+                "Full Name*",
                 placeholder="Enter customer's full name",
                 help="Enter the complete name of the customer"
             )
             pan_card = st.text_input(
-                "PAN Card Number*", 
+                "PAN Card Number*",
                 placeholder="ABCDE1234F",
                 help="Enter 10-character PAN card number"
             ).upper()
             phone_number = st.text_input(
-                "Phone Number*", 
+                "Phone Number*",
                 placeholder="+91 9876543210",
                 help="Enter customer's phone number"
             )
 
         with col2:
             aadhar_number = st.text_input(
-                "Aadhar Card Number*", 
+                "Aadhar Card Number*",
                 placeholder="1234 5678 9012",
                 help="Enter 12-digit Aadhar number"
             )
             email_address = st.text_input(
-                "Email Address", 
+                "Email Address",
                 placeholder="customer@email.com",
                 help="Enter customer's email address"
             )
@@ -338,11 +465,13 @@ def customer_enrollment_page():
 
         if is_family_member and not existing_customers.empty:
             with col4:
-                parent_options = {row['id']: f"{row['name']} ({row['pan']})" for _, row in existing_customers.iterrows()}
+                parent_options = {row['id']: f"{row['name']} ({row['pan']})" for _, row in
+                                  existing_customers.iterrows()}
                 selected_parent = st.selectbox(
                     "Select Parent/Primary Customer",
                     options=[""] + list(parent_options.keys()),
-                    format_func=lambda x: parent_options.get(x, "Select Parent Customer") if x else "Select Parent Customer"
+                    format_func=lambda x: parent_options.get(x,
+                                                             "Select Parent Customer") if x else "Select Parent Customer"
                 )
                 if selected_parent and selected_parent != "":
                     parent_customer_id = selected_parent
@@ -382,8 +511,8 @@ def customer_enrollment_page():
                 c.execute(
                     "INSERT INTO customers (id, agent_id, pan, aadhar, name, phone, email, income_range, parent_id, relationship, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (customer_id, st.session_state.current_agent['id'], pan_card, aadhar_number,
-                     customer_name, phone_number, email_address, income_range, 
-                     parent_customer_id, relationship, datetime.now()))
+                     customer_name, phone_number, email_address, income_range,
+                     parent_customer_id, relationship, datetime.now().date()))
                 conn.commit()
                 conn.close()
 
@@ -398,6 +527,7 @@ def customer_enrollment_page():
                 st.error(f"❌ Error registering customer: {str(e)}")
                 if conn:
                     conn.close()
+
 
 # Policy enrollment page
 def policy_enrollment_page():
@@ -460,13 +590,13 @@ def policy_enrollment_page():
 
         with col1:
             policy_number = st.text_input(
-                "Policy Number*", 
+                "Policy Number*",
                 placeholder="POL123456789",
                 help="Enter unique policy number"
             )
             premium_amount = st.number_input(
-                "Premium Amount (₹)*", 
-                min_value=0.0, 
+                "Premium Amount (₹)*",
+                min_value=0.0,
                 step=1000.0,
                 help="Enter premium amount in rupees"
             )
@@ -483,12 +613,12 @@ def policy_enrollment_page():
 
         with col2:
             insurance_provider = st.text_input(
-                "Insurance Provider*", 
+                "Insurance Provider*",
                 placeholder="LIC of India, HDFC Life, etc.",
                 help="Enter name of insurance company"
             )
             coverage_type = st.selectbox(
-                "Coverage Type*", 
+                "Coverage Type*",
                 ["Individual", "Family"],
                 help="Select coverage type"
             )
@@ -548,7 +678,7 @@ def policy_enrollment_page():
         if submitted:
             # Validation
             required_fields = [policy_number, premium_amount, frequency, insurance_type,
-                             insurance_provider, coverage_type, start_date, end_date, nominee_name]
+                               insurance_provider, coverage_type, start_date, end_date, nominee_name]
 
             if not all(required_fields) or premium_amount <= 0:
                 st.error("❌ Please fill all required fields marked with *")
@@ -602,6 +732,7 @@ def policy_enrollment_page():
                 if conn:
                     conn.close()
 
+
 def generate_premium_dates(start_date, end_date, frequency):
     dates = []
     current_date = start_date
@@ -616,6 +747,7 @@ def generate_premium_dates(start_date, end_date, frequency):
         dates.append(current_date)
         current_date += timedelta(days=days)
     return dates
+
 
 # Family Management page
 def family_management_page():
@@ -670,9 +802,28 @@ def family_management_page():
 
             if not family_policies.empty:
                 st.write("**Family Policies:**")
+
+                # Add sorting options
+                sort_option = st.selectbox(
+                    "Sort policies by",
+                    ["Status", "Policy Number", "Type", "Provider"],
+                    key=f"sort_{primary['id']}"
+                )
+
+                # Apply sorting
+                if sort_option == "Status":
+                    family_policies = family_policies.sort_values("status")
+                elif sort_option == "Policy Number":
+                    family_policies = family_policies.sort_values("policy_number")
+                elif sort_option == "Type":
+                    family_policies = family_policies.sort_values("type")
+                elif sort_option == "Provider":
+                    family_policies = family_policies.sort_values("provider")
+
                 st.dataframe(family_policies, use_container_width=True)
 
     conn.close()
+
 
 # Records page
 def records_page():
@@ -737,6 +888,8 @@ def records_page():
 
     conn.close()
 
+
+# Update the display_customer_details function to handle cancelled policies better
 def display_customer_details(customer, conn):
     # Customer header with family info
     if customer.get('parent_id'):
@@ -754,7 +907,7 @@ def display_customer_details(customer, conn):
         st.write(f"**Income Range:** {customer['income_range']}")
         st.write(f"**Customer Since:** {customer['created_at'][:10]}")
 
-    # Get policies for this customer
+    # Get policies for this customer (including cancelled ones)
     policies = pd.read_sql_query(
         "SELECT p.*, holder.name as holder_name FROM policies p LEFT JOIN customers holder ON p.policy_holder_id = holder.id WHERE p.customer_id=? ORDER BY p.start_date DESC",
         conn, params=(customer['id'],)
@@ -762,8 +915,19 @@ def display_customer_details(customer, conn):
 
     if not policies.empty:
         st.subheader("📋 Policies")
+
+        # Add policy status filter
+        status_filter = st.selectbox(
+            "Filter by Status",
+            ["All", "Active", "Lapsed", "Completed", "Cancelled"],
+            key=f"status_filter_{customer['id']}"
+        )
+
+        if status_filter != "All":
+            policies = policies[policies['status'] == status_filter]
+
         for _, policy in policies.iterrows():
-            status_emoji = "✅" if policy['status'] == 'Active' else "❌"
+            status_emoji = "✅" if policy['status'] == 'Active' else "⏰" if policy['status'] == 'Lapsed' else "🏁" if policy['status'] == 'Completed' else "❌"
 
             with st.expander(f"{status_emoji} {policy['policy_number']} - {policy['type']} ({policy['status']})"):
                 col1, col2, col3 = st.columns(3)
@@ -785,52 +949,125 @@ def display_customer_details(customer, conn):
                     if policy.get('holder_name') and policy['holder_name'] != customer['name']:
                         st.write(f"**Policy Holder:** {policy['holder_name']}")
 
-                # Show upcoming premiums for this policy
-                premiums = pd.read_sql_query(
-                    "SELECT * FROM premiums WHERE policy_id=? AND status='Pending' ORDER BY due_date LIMIT 3",
-                    conn, params=(policy['id'],)
-                )
-
-                if not premiums.empty:
-                    st.write("**Upcoming Premiums:**")
-                    for _, premium in premiums.iterrows():
-                        due_date = premium['due_date'][:10] if isinstance(premium['due_date'], str) else premium['due_date']
-                        st.write(f"• ₹{premium['amount']:,.2f} due on {due_date}")
-
-                    # Mark premium as paid
-                    if st.button(f"Mark Next Premium as Paid", key=f"paid_{policy['id']}"):
-                        mark_premium_as_paid(policy['id'], conn)
+                # Policy actions - only show for active/lapsed policies
+                if policy['status'] in ['Active', 'Lapsed']:
+                    if st.button(f"❌ Cancel Policy", key=f"cancel_{policy['id']}"):
+                        cancel_policy(policy['id'], conn)
                         st.rerun()
+
+                # Show premium history only for non-cancelled policies
+                if policy['status'] != 'Cancelled':
+                    premiums = pd.read_sql_query(
+                        "SELECT * FROM premiums WHERE policy_id=? ORDER BY due_date",
+                        conn, params=(policy['id'],)
+                    )
+
+                    if not premiums.empty:
+                        st.write("**Premium History:**")
+
+                        # Separate paid and pending premiums
+                        paid_premiums = premiums[premiums['status'] == 'Paid']
+                        pending_premiums = premiums[premiums['status'] == 'Pending']
+
+                        if not paid_premiums.empty:
+                            st.write("**Paid Premiums:**")
+                            for _, premium in paid_premiums.iterrows():
+                                paid_date = premium['paid_date'][:10] if isinstance(premium['paid_date'], str) else premium['paid_date']
+                                due_date = premium['due_date'][:10] if isinstance(premium['due_date'], str) else premium['due_date']
+                                st.write(f"• ₹{premium['amount']:,.2f} paid on {paid_date} (due: {due_date})")
+
+                        if not pending_premiums.empty:
+                            st.write("**Upcoming Premiums:**")
+                            for _, premium in pending_premiums.iterrows():
+                                due_date = premium['due_date'][:10] if isinstance(premium['due_date'], str) else premium['due_date']
+                                # Fixed line below:
+                                status_icon = "⏰" if pd.to_datetime(due_date).date() < datetime.now().date() else "📅"
+                                st.write(f"• {status_icon} ₹{premium['amount']:,.2f} due on {due_date}")
+
+                        # Mark premium as paid (only for pending premiums)
+                        if not pending_premiums.empty:
+                            due_dates = [premium['due_date'] for _, premium in pending_premiums.iterrows()]
+                            selected_due_date = st.selectbox(
+                                "Select premium to mark as paid",
+                                due_dates,
+                                key=f"premium_select_{policy['id']}",
+                                format_func=lambda x: x[:10] if isinstance(x, str) else x
+                            )
+
+                            if st.button(f"Mark Premium as Paid", key=f"pay_{policy['id']}"):
+                                mark_specific_premium_as_paid(policy['id'], selected_due_date, conn)
+                                st.rerun()
+                else:
+                    st.info("This policy has been cancelled. No premium payments are required.")
     else:
         st.info("No policies found for this customer")
 
-def mark_premium_as_paid(policy_id, conn):
-    premium = pd.read_sql_query(
-        "SELECT * FROM premiums WHERE policy_id=? AND status='Pending' ORDER BY due_date LIMIT 1",
-        conn, params=(policy_id,)
-    )
-    if not premium.empty:
-        c = conn.cursor()
-        c.execute("UPDATE premiums SET status='Paid', paid_date=? WHERE id=?",
-                  (datetime.now().date(), premium.iloc[0]['id']))
-        conn.commit()
-        st.success("Premium marked as paid!")
 
-# Upcoming premiums page
+# Also update the mark_specific_premium_as_paid function to not update status for cancelled policies
+def mark_specific_premium_as_paid(policy_id, due_date, conn):
+    # First check if policy is cancelled
+    c = conn.cursor()
+    c.execute("SELECT status FROM policies WHERE id=?", (policy_id,))
+    policy_status = c.fetchone()[0]
+
+    if policy_status == 'Cancelled':
+        st.error("Cannot mark premium as paid for a cancelled policy!")
+        return
+
+    c.execute("UPDATE premiums SET status='Paid', paid_date=? WHERE policy_id=? AND due_date=?",
+              (datetime.now().date(), policy_id, due_date))
+    conn.commit()
+
+    # Update policy status after marking premium as paid (only if not cancelled)
+    if policy_status != 'Cancelled':
+        update_policy_status(policy_id, conn)
+    st.success("Premium marked as paid!")
+
+
+# Upcoming premiums page with enhanced features
+# Update the upcoming_premiums_page function to exclude cancelled policies
 def upcoming_premiums_page():
     st.title("📅 Upcoming Premiums")
 
     timeframe = st.selectbox("Show premiums due within",
-                           ["30 days", "60 days", "90 days", "All upcoming"])
+                             ["30 days", "60 days", "90 days", "All upcoming", "Overdue"])
 
-    days_map = {"30 days": 30, "60 days": 60, "90 days": 90, "All upcoming": 3650}
+    # Status filter - exclude cancelled policies
+    status_filter = st.selectbox("Filter by Policy Status",
+                                 ["All", "Active", "Lapsed", "Completed"])
+
+    days_map = {"30 days": 30, "60 days": 60, "90 days": 90, "All upcoming": 3650, "Overdue": -3650}
     days = days_map[timeframe]
 
     conn = sqlite3.connect('data/crm.db')
-    premiums = pd.read_sql_query(
-        "SELECT pr.due_date, pr.amount, pr.status, c.name as customer_name, p.policy_number, p.type as policy_type, p.provider, holder.name as policy_holder FROM premiums pr JOIN policies p ON pr.policy_id = p.id JOIN customers c ON p.customer_id = c.id LEFT JOIN customers holder ON p.policy_holder_id = holder.id WHERE c.agent_id=? AND pr.status='Pending' AND pr.due_date BETWEEN date('now') AND date('now', ?) ORDER BY pr.due_date",
-        conn, params=(st.session_state.current_agent['id'], f"+{days} days")
-    )
+
+    # Build query based on filters - exclude cancelled policies
+    query = '''
+        SELECT pr.due_date, pr.amount, pr.status as premium_status, 
+               c.name as customer_name, p.policy_number, p.type as policy_type, 
+               p.provider, p.status as policy_status, holder.name as policy_holder 
+        FROM premiums pr 
+        JOIN policies p ON pr.policy_id = p.id 
+        JOIN customers c ON p.customer_id = c.id 
+        LEFT JOIN customers holder ON p.policy_holder_id = holder.id 
+        WHERE c.agent_id=? AND pr.status='Pending' AND p.status != 'Cancelled'
+    '''
+
+    params = [st.session_state.current_agent['id']]
+
+    if timeframe == "Overdue":
+        query += " AND pr.due_date < date('now')"
+    elif timeframe != "All upcoming":
+        query += " AND pr.due_date BETWEEN date('now') AND date('now', ?)"
+        params.append(f"+{days} days")
+
+    if status_filter != "All":
+        query += " AND p.status=?"
+        params.append(status_filter)
+
+    query += " ORDER BY pr.due_date"
+
+    premiums = pd.read_sql_query(query, conn, params=params)
 
     if not premiums.empty:
         if isinstance(premiums['due_date'].iloc[0], str):
@@ -838,37 +1075,133 @@ def upcoming_premiums_page():
 
         total_amount = premiums['amount'].sum()
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("💰 Total Amount Due", f"₹{total_amount:,.2f}")
         with col2:
             st.metric("📊 Number of Premiums", len(premiums))
+        with col3:
+            overdue_count = len(premiums[premiums['due_date'] < datetime.now().date()])
+            st.metric("⏰ Overdue Premiums", overdue_count)
 
-        st.dataframe(premiums, use_container_width=True)
+        # Add sorting options
+        sort_option = st.selectbox("Sort by", ["Due Date", "Amount", "Customer Name", "Policy Number"])
 
-        # Option to mark as paid  
-        st.subheader("Mark Premium as Paid")
+        if sort_option == "Due Date":
+            premiums = premiums.sort_values("due_date")
+        elif sort_option == "Amount":
+            premiums = premiums.sort_values("amount", ascending=False)
+        elif sort_option == "Customer Name":
+            premiums = premiums.sort_values("customer_name")
+        elif sort_option == "Policy Number":
+            premiums = premiums.sort_values("policy_number")
+
+        # Format display
+        display_df = premiums.copy()
+        display_df['due_date'] = display_df['due_date'].apply(
+            lambda x: x.strftime('%Y-%m-%d') if hasattr(x, 'strftime') else x)
+        display_df['amount'] = display_df['amount'].apply(lambda x: f"₹{x:,.2f}")
+
+        st.dataframe(display_df, use_container_width=True)
+
+        # Bulk actions section
+        st.subheader("Bulk Actions")
+
+        # Select policies with premiums
         policy_options = premiums['policy_number'].unique()
-        selected_policy = st.selectbox("Select Policy", policy_options)
+        selected_policies = st.multiselect("Select Policies", policy_options)
 
-        if selected_policy:
-            policy_premiums = premiums[premiums['policy_number'] == selected_policy]
-            due_dates = policy_premiums['due_date'].tolist()
-            selected_date = st.selectbox("Select Due Date", due_dates)
+        if selected_policies:
+            # Get due dates for selected policies
+            selected_premiums = premiums[premiums['policy_number'].isin(selected_policies)]
+            due_dates = selected_premiums['due_date'].unique()
 
-            if st.button("Mark as Paid", type="primary"):
+            if st.button("Mark Selected Premiums as Paid", type="primary"):
                 c = conn.cursor()
-                c.execute(
-                    "UPDATE premiums SET status='Paid', paid_date=? WHERE policy_id=(SELECT id FROM policies WHERE policy_number=?) AND due_date=?",
-                    (datetime.now().date(), selected_policy, selected_date)
-                )
+                for policy_number in selected_policies:
+                    policy_premiums = selected_premiums[selected_premiums['policy_number'] == policy_number]
+                    for due_date in policy_premiums['due_date']:
+                        c.execute(
+                            "UPDATE premiums SET status='Paid', paid_date=? WHERE policy_id=(SELECT id FROM policies WHERE policy_number=?) AND due_date=?",
+                            (datetime.now().date(), policy_number, due_date)
+                        )
+                        # Update policy status
+                        c.execute("SELECT id FROM policies WHERE policy_number=?", (policy_number,))
+                        policy_id = c.fetchone()[0]
+                        update_policy_status(policy_id, conn)
+
                 conn.commit()
-                st.success("Premium marked as paid!")
+                st.success("Selected premiums marked as paid!")
                 st.rerun()
     else:
         st.info("No upcoming premiums found")
 
     conn.close()
+
+# Add a function to update all policy statuses (for maintenance)
+def update_all_policy_statuses():
+    conn = sqlite3.connect('data/crm.db')
+    c = conn.cursor()
+
+    # Get all policies for this agent
+    c.execute('''
+        SELECT p.id FROM policies p 
+        JOIN customers c ON p.customer_id = c.id 
+        WHERE c.agent_id=?
+    ''', (st.session_state.current_agent['id'],))
+
+    policy_ids = [row[0] for row in c.fetchall()]
+
+    for policy_id in policy_ids:
+        update_policy_status(policy_id, conn)
+
+    conn.close()
+    st.sidebar.success("All policy statuses updated!")
+
+
+# Add this to the sidebar for maintenance
+def render_sidebar():
+    with st.sidebar:
+        st.title("InsureCRM Navigation")
+
+        if st.session_state.current_agent:
+            st.write(f"**Logged in as:** {st.session_state.current_agent['name']}")
+            st.write(f"**Agent ID:** {st.session_state.current_agent['id']}")
+            st.divider()
+
+        # Navigation options
+        nav_options = {
+            "Dashboard": "📊",
+            "Customer Enrollment": "👥",
+            "Policy Enrollment": "📝",
+            "Records": "📂",
+            "Family Management": "👨‍👩‍👧‍👦",
+            "Upcoming Premiums": "💰"
+        }
+
+        for page, icon in nav_options.items():
+            if st.button(f"{icon} {page}", use_container_width=True,
+                         type="primary" if st.session_state.page == page else "secondary"):
+                navigate_to(page)
+
+        # Data management section
+        st.divider()
+        st.subheader("Data Management")
+
+        if st.button("💾 Export Data (CSV + TXT)", use_container_width=True):
+            export_data_to_csv_and_txt()
+
+        if st.button("🔄 Update All Policy Statuses", use_container_width=True):
+            update_all_policy_statuses()
+
+        st.divider()
+
+        if st.session_state.current_agent:
+            if st.button("🚪 Logout", use_container_width=True):
+                st.session_state.current_agent = None
+                st.session_state.page = 'Login'
+                st.rerun()
+
 
 # Main app logic
 def main():
@@ -888,6 +1221,7 @@ def main():
             family_management_page()
         elif st.session_state.page == 'Upcoming Premiums':
             upcoming_premiums_page()
+
 
 if __name__ == "__main__":
     main()
