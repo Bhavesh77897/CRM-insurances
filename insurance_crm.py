@@ -3,6 +3,7 @@ import pandas as pd
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
+import os
 
 # Set up the page
 st.set_page_config(
@@ -14,7 +15,12 @@ st.set_page_config(
 
 # Database setup
 def init_db():
-    conn = sqlite3.connect('crm.db')
+    # Create data directory if it doesn't exist
+    if not os.path.exists('data'):
+        os.makedirs('data')
+    
+    # Connect to database in data directory
+    conn = sqlite3.connect('data/crm.db')
     c = conn.cursor()
 
     # Create tables if they don't exist
@@ -41,6 +47,27 @@ def init_db():
                 amount REAL, status TEXT, paid_date TIMESTAMP,
                 FOREIGN KEY(policy_id) REFERENCES policies(id))''')
 
+    # Check if new columns exist, if not add them
+    c.execute("PRAGMA table_info(customers)")
+    columns = [col[1] for col in c.fetchall()]
+
+    if 'parent_id' not in columns:
+        c.execute("ALTER TABLE customers ADD COLUMN parent_id TEXT")
+    if 'relationship' not in columns:
+        c.execute("ALTER TABLE customers ADD COLUMN relationship TEXT")
+
+    c.execute("PRAGMA table_info(policies)")
+    policy_columns = [col[1] for col in c.fetchall()]
+
+    if 'policy_holder_id' not in policy_columns:
+        c.execute("ALTER TABLE policies ADD COLUMN policy_holder_id TEXT")
+    if 'beneficiary_name' not in policy_columns:
+        c.execute("ALTER TABLE policies ADD COLUMN beneficiary_name TEXT")
+    if 'beneficiary_pan' not in policy_columns:
+        c.execute("ALTER TABLE policies ADD COLUMN beneficiary_pan TEXT")
+    if 'beneficiary_aadhar' not in policy_columns:
+        c.execute("ALTER TABLE policies ADD COLUMN beneficiary_aadhar TEXT")
+
     conn.commit()
     conn.close()
 
@@ -55,7 +82,7 @@ if 'page' not in st.session_state:
 
 # Agent authentication
 def agent_login(agent_id):
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
     c = conn.cursor()
     c.execute("SELECT * FROM agents WHERE id=?", (agent_id,))
     agent = c.fetchone()
@@ -72,7 +99,7 @@ def agent_login(agent_id):
 
 # Create a demo agent if none exists
 def create_demo_agent():
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM agents")
     count = c.fetchone()[0]
@@ -115,6 +142,13 @@ def render_sidebar():
                         type="primary" if st.session_state.page == page else "secondary"):
                 navigate_to(page)
         
+        # Data management section
+        st.divider()
+        st.subheader("Data Management")
+        
+        if st.button("💾 Export Data to CSV", use_container_width=True):
+            export_data_to_csv()
+        
         st.divider()
         
         if st.session_state.current_agent:
@@ -122,6 +156,29 @@ def render_sidebar():
                 st.session_state.current_agent = None
                 st.session_state.page = 'Login'
                 st.rerun()
+
+# Data export function
+def export_data_to_csv():
+    try:
+        conn = sqlite3.connect('data/crm.db')
+        
+        # Export customers
+        customers_df = pd.read_sql_query("SELECT * FROM customers", conn)
+        customers_df.to_csv("data/customers_export.csv", index=False)
+        
+        # Export policies
+        policies_df = pd.read_sql_query("SELECT * FROM policies", conn)
+        policies_df.to_csv("data/policies_export.csv", index=False)
+        
+        # Export premiums
+        premiums_df = pd.read_sql_query("SELECT * FROM premiums", conn)
+        premiums_df.to_csv("data/premiums_export.csv", index=False)
+        
+        conn.close()
+        
+        st.sidebar.success("Data exported successfully to data/ folder!")
+    except Exception as e:
+        st.sidebar.error(f"Error exporting data: {str(e)}")
 
 # Login page
 def login_page():
@@ -146,7 +203,7 @@ def dashboard_page():
     st.title("📊 Insurance CRM Dashboard")
     
     # Dashboard metrics
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
     
     # Get counts
     customers_count = pd.read_sql_query(
@@ -223,7 +280,7 @@ def customer_enrollment_page():
     st.markdown("Register a new customer in the system")
 
     # Get existing customers for parent selection
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
     existing_customers = pd.read_sql_query(
         "SELECT id, name, pan FROM customers WHERE agent_id=?",
         conn, params=(st.session_state.current_agent['id'],)
@@ -309,7 +366,7 @@ def customer_enrollment_page():
                 return
 
             # Save to database
-            conn = sqlite3.connect('crm.db')
+            conn = sqlite3.connect('data/crm.db')
             c = conn.cursor()
 
             # Check if PAN already exists
@@ -324,9 +381,9 @@ def customer_enrollment_page():
                 customer_id = f"C{str(uuid.uuid4())[:8]}"
                 c.execute(
                     "INSERT INTO customers (id, agent_id, pan, aadhar, name, phone, email, income_range, parent_id, relationship, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (customer_id, st.session_state.current_agent['id'], str(pan_card), str(aadhar_number),
-                     customer_name, str(phone_number), email_address, income_range, 
-                     parent_customer_id, relationship, datetime.now().date()))
+                    (customer_id, st.session_state.current_agent['id'], pan_card, aadhar_number,
+                     customer_name, phone_number, email_address, income_range, 
+                     parent_customer_id, relationship, datetime.now()))
                 conn.commit()
                 conn.close()
 
@@ -348,7 +405,7 @@ def policy_enrollment_page():
     st.markdown("Register a new insurance policy")
 
     # Get customers for this agent
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
     customers = pd.read_sql_query(
         "SELECT c.id, c.name, c.pan, c.parent_id, c.relationship, parent.name as parent_name, parent.pan as parent_pan FROM customers c LEFT JOIN customers parent ON c.parent_id = parent.id WHERE c.agent_id=? ORDER BY c.name",
         conn, params=(st.session_state.current_agent['id'],)
@@ -502,7 +559,7 @@ def policy_enrollment_page():
                 return
 
             # Save policy
-            conn = sqlite3.connect('crm.db')
+            conn = sqlite3.connect('data/crm.db')
             c = conn.cursor()
 
             # Check if policy number already exists
@@ -565,7 +622,7 @@ def family_management_page():
     st.title("👨‍👩‍👧‍👦 Family Management")
     st.markdown("Manage customer families and relationships")
 
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
 
     # Get all customers with family info
     families = pd.read_sql_query(
@@ -624,7 +681,7 @@ def records_page():
 
     search_option = st.radio("Search by", ["PAN Card", "Customer Name", "Family"])
 
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
 
     if search_option == "PAN Card":
         pan_search = st.text_input("Enter PAN Card Number", placeholder="ABCDE1234F").upper()
@@ -769,7 +826,7 @@ def upcoming_premiums_page():
     days_map = {"30 days": 30, "60 days": 60, "90 days": 90, "All upcoming": 3650}
     days = days_map[timeframe]
 
-    conn = sqlite3.connect('crm.db')
+    conn = sqlite3.connect('data/crm.db')
     premiums = pd.read_sql_query(
         "SELECT pr.due_date, pr.amount, pr.status, c.name as customer_name, p.policy_number, p.type as policy_type, p.provider, holder.name as policy_holder FROM premiums pr JOIN policies p ON pr.policy_id = p.id JOIN customers c ON p.customer_id = c.id LEFT JOIN customers holder ON p.policy_holder_id = holder.id WHERE c.agent_id=? AND pr.status='Pending' AND pr.due_date BETWEEN date('now') AND date('now', ?) ORDER BY pr.due_date",
         conn, params=(st.session_state.current_agent['id'], f"+{days} days")
@@ -810,50 +867,6 @@ def upcoming_premiums_page():
                 st.rerun()
     else:
         st.info("No upcoming premiums found")
-
-    conn.close()
-# Database Viewer page
-def database_viewer_page():
-    st.title("📑 Database Viewer")
-    st.markdown("Browse raw data stored in the SQLite database")
-
-    conn = sqlite3.connect("crm.db")
-    tables = ["agents", "customers", "policies", "premiums"]
-
-    selected_table = st.selectbox("Select Table", tables)
-
-    try:
-        df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
-
-        # 🔹 Fix formatting for specific columns
-        if "phone" in df.columns:
-            df["phone"] = df["phone"].astype(str)
-        if "aadhar" in df.columns:
-            df["aadhar"] = df["aadhar"].astype(str)
-        if "created_at" in df.columns:
-            df["created_at"] = pd.to_datetime(
-                df["created_at"], errors="coerce", infer_datetime_format=True
-            ).dt.date
-
-        if df.empty:
-            st.info(f"No records found in table `{selected_table}`.")
-        else:
-            st.dataframe(df, use_container_width=True)
-
-            # Show row count
-            st.write(f"**Total Rows:** {len(df)}")
-
-            # ✅ Download as CSV with utf-8-sig (Excel friendly)
-            csv = df.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                label=f"⬇️ Download {selected_table} as CSV",
-                data=csv,
-                file_name=f"{selected_table}.csv",
-                mime="text/csv",
-            )
-
-    except Exception as e:
-        st.error(f"Error loading table: {e}")
 
     conn.close()
 
